@@ -7,13 +7,11 @@ import psycopg2
 import re
 from calendar import monthrange
 
-# --- 1. KONFIGURASI REGION ---
 REGION_MAP = {
     "Prambanan": "East", "3rd Party": "East", "Import": "East",
     "Ciracas": "West", "Sentul": "West"
 }
 
-# --- 2. PRIORITY LIST (Update Terbaru GH & JK) ---
 PRIORITY_LIST = {
     "East_3rd Party_RTD 1": ["203835", "207670", "207666"],
     "East_3rd Party_RTD 2": ["203837", "207657", "207654"],
@@ -74,7 +72,6 @@ def get_db_master_full():
         conn.close()
         
         df_db['sku_code'] = df_db['sku_code'].apply(format_material)
-        # CASE INSENSITIVE: Paksa Line Database jadi Uppercase
         df_db['line'] = df_db['line'].astype(str).str.strip().str.upper()
         df_db['size'] = pd.to_numeric(df_db['size'], errors='coerce').fillna(0).round(0).astype(float)
         df_db['pcs_cb'] = pd.to_numeric(df_db['pcs_cb'], errors='coerce').fillna(0).round(0).astype(float)
@@ -96,26 +93,21 @@ def generate_date_range(start_m, start_y, end_m, end_y):
         current = datetime.datetime(year, month, 1)
     return target_months
 
-# --- 4. LOGIKA VALIDASI LINE & SPEED (CASE INSENSITIVE) ---
-
 def validate_row_and_get_data(row, df_master):
     sku = format_material(row['Material'])
     size_src = round(float(pd.to_numeric(row['Size'], errors='coerce') or 0), 0)
     pcs_cb_src = round(float(pd.to_numeric(row['Pcs/cb'], errors='coerce') or 0), 0)
     
-    # CASE INSENSITIVE: Paksa Machine 1 jadi Uppercase
     m1 = str(row['Machine 1']).strip().upper()
     plant = str(row['Plant']).strip()
     region = REGION_MAP.get(plant, "Unknown")
 
-    # Pencarian 1: SKU + Size + Pcs/cb
     matches = df_master[
         (df_master['sku_code'] == sku) & 
         (np.isclose(df_master['size'], size_src, atol=0.1)) & 
         (np.isclose(df_master['pcs_cb'], pcs_cb_src, atol=0.1))
     ]
     
-    # Fallback: SKU + Size
     if matches.empty:
         matches = df_master[(df_master['sku_code'] == sku) & (np.isclose(df_master['size'], size_src, atol=0.1))]
 
@@ -149,8 +141,6 @@ def validate_row_and_get_data(row, df_master):
             speed = line_match['speed'].iloc[0] if not line_match.empty else matches['speed'].iloc[0]
     
     return assigned_line, speed
-
-# --- 5. PROSES UTAMA ---
 
 def process_data(uploaded_file, sheet_target, target_range, df_master):
     df_raw = pd.read_excel(uploaded_file, sheet_name=sheet_target, header=None)
@@ -210,7 +200,6 @@ def process_data(uploaded_file, sheet_target, target_range, df_master):
                 df_month = df_group[df_group['Month'] == m].copy()
                 if df_month.empty: continue
                 
-                # URUTAN: Priority -> Non-Priority -> Missing Master Data (Row Hijau)
                 df_p = df_month[(df_month['Material'].isin(priority_order)) & (df_month['Speed'] > 0)].copy()
                 df_t = df_month[(~df_month['Material'].isin(priority_order)) & (df_month['Speed'] > 0)].copy()
                 df_missing = df_month[df_month['Speed'] == 0].copy()
@@ -269,7 +258,6 @@ def process_data(uploaded_file, sheet_target, target_range, df_master):
             
     return output.getvalue()
 
-# --- 6. UI ---
 st.set_page_config(page_title="MPS to DPS Pro", layout="wide")
 st.title("📊 MPS to DPS Converter")
 
@@ -291,7 +279,7 @@ if file_upload:
             trange = generate_date_range(sm, sy, em, ey)
             res = process_data(file_upload, sheet_target, trange, df_master)
             if res:
-                st.success("Berhasil! l4 dan L4 sekarang dianggap sama.")
-                st.download_button("📥 Download Hasil Akhir", res, f"MPS_Final_{datetime.date.today()}.xlsx")
+                st.success("Berhasil! Pembersihan Data telah Dilakukan.")
+                st.download_button("📥 Unduh Hasil Akhir", res, f"MPS_Final_{datetime.date.today()}.xlsx")
         except Exception as e:
             st.error(f"Error: {e}")
