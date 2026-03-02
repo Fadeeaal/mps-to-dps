@@ -258,8 +258,8 @@ def process_data(uploaded_file, sheet_target, target_range, df_master):
             
     return output.getvalue()
 
-st.set_page_config(page_title="MPS to DPS Pro", layout="wide")
-st.title("📊 MPS to DPS Converter")
+st.set_page_config(page_title="MPS - DPS Converter", layout="wide")
+st.title("MPS to DPS Converter")
 
 df_master = get_db_master_full()
 file_upload = st.file_uploader("Upload File MPS Cycle", type="xlsx")
@@ -268,13 +268,13 @@ if file_upload:
     xl = pd.ExcelFile(file_upload)
     with st.sidebar:
         st.header("⚙️ Konfigurasi")
-        sheet_target = st.selectbox("Sheet Sumber", xl.sheet_names, index=0)
+        sheet_target = st.selectbox("Sumber Sheet", xl.sheet_names, index=0)
         sm = st.selectbox("Mulai", MONTHS_LIST, index=0)
         sy = st.number_input("Tahun", value=2026, key='tahun_mulai') 
         em = st.selectbox("Sampai", MONTHS_LIST, index=11)
         ey = st.number_input("Tahun", value=2026, key='tahun_selesai') 
 
-    if st.button("Start Process", use_container_width=True):
+    if st.button("Mulai Proses", use_container_width=True):
         try:
             trange = generate_date_range(sm, sy, em, ey)
             res = process_data(file_upload, sheet_target, trange, df_master)
