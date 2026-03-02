@@ -273,7 +273,7 @@ if file_upload:
             trange = generate_date_range(sm, sy, em, ey)
             res = process_data(file_upload, sheet_target, trange, df_master)
             if res:
-                st.success("Berhasil! Jalur West sekarang mengikuti Machine 1 dari file sumber.")
-                st.download_button("📥 Download", res, f"MPS_Final_{datetime.date.today()}.xlsx")
+                st.success("Berhasil! Data telah Dikonversi.")
+                st.download_button("📥 Unduh Hasil Data", res, f"MPS_Final_{datetime.date.today()}.xlsx")
         except Exception as e:
             st.error(f"Error: {e}")
