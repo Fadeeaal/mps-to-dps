@@ -7,13 +7,11 @@ import psycopg2
 import re
 from calendar import monthrange
 
-# --- 1. KONFIGURASI REGION ---
 REGION_MAP = {
     "Prambanan": "East", "3rd Party": "East", "Import": "East",
     "Ciracas": "West", "Sentul": "West"
 }
 
-# --- 2. PRIORITY LIST ---
 PRIORITY_LIST = {
     "East_3rd Party_RTD 1": ["203835", "207670", "207666"],
     "East_3rd Party_RTD 2": ["203837", "207657", "207654"],
@@ -24,8 +22,7 @@ PRIORITY_LIST = {
     "East_Prambanan_TU": ["196805", "196878", "196881", "196882", "208375", "208376A", "196655A", "196648A", "196658A", "196660A", "196663A"],
     "East_Prambanan_CD": ["173757", "173758", "137829", "208391A", "208392A", "208370A", "208371A", "205725A", "205728A", "205732A", "205739A", "202418", "202425", "202434", "202430", "205725", "205728", "205732", "205739", "198865", "198866"],
     "East_Prambanan_JK": ["196653", "196656", "196659", "196661", "206030", "208362", "208365A", "208376", "157937", "196655", "196663", "196648", "196658", "196660", "196653A", "196656A", "1V1050", "1H1050", "196659A", "196661A", "206030A", "208362A", "3H1050", "3V1050"],
-    
-    # West Priority Lists (Disamakan SGZ dan BiB untuk Sentul agar urutan konsisten)
+
     "West_Ciracas_L2": ["150155", "171708", "203906", "203907", "178494", "197013", "202723", "202727", "202722", "202724", "213164", "213160", "213158", "213157", "196671", "210729", "210729A", "196672", "158213", "196673", "196673A", "196668A", "196668", "208966", "196667", "196666"],
     "West_Ciracas_L3": ["130075", "195078", "133087", "195079", "130386", "171709", "178513", "202883", "178477", "133083", "171710", "197016", "202882", "166777", "196670", "196670A", "196669", "196669A", "196664", "196664A", "196665", "196665A", "158209"],
     "West_Ciracas_L4": ["130074", "161733", "147031", "147029", "171707", "204174", "202894", "178477", "197015", "202895", "171708", "204173", "213164", "213160", "202723", "202727", "196670", "196664", "196665", "208960", "196671", "196671A", "196666", "196666A", "196672", "210729", "210729A", "210728", "210728A", "196667"],
@@ -36,8 +33,6 @@ PRIORITY_LIST = {
 
 INPUT_COLUMNS = ["Material", "Material Description", "Plant", "Size", "Pcs/cb", "Machine 1"]
 MONTHS_LIST = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-# --- 3. FUNGSI HELPER ---
 
 def format_material(val):
     if pd.isna(val): return ""
@@ -56,7 +51,7 @@ def get_db_master_full():
             password=st.secrets["postgres"]["password"],
             port=st.secrets["postgres"]["port"]
         )
-        query = "SELECT sku_code, size, pcs_cb, line, speed, region FROM fg_master_data"
+        query = "SELECT sku_code, size, pcs_cb, line, speed, region, kg_cb FROM fg_master_data"
         df_db = pd.read_sql(query, conn)
         conn.close()
         df_db['sku_code'] = df_db['sku_code'].apply(format_material)
@@ -65,6 +60,8 @@ def get_db_master_full():
         df_db['size'] = pd.to_numeric(df_db['size'], errors='coerce').fillna(0).round(0).astype(float)
         df_db['pcs_cb'] = pd.to_numeric(df_db['pcs_cb'], errors='coerce').fillna(0).round(0).astype(float)
         df_db['speed'] = pd.to_numeric(df_db['speed'], errors='coerce').fillna(0).astype(float)
+        df_db['kg_cb'] = pd.to_numeric(df_db['kg_cb'], errors='coerce').fillna(0).round(2).astype(float)
+
         return df_db
     except Exception as e:
         st.error(f"Koneksi DB Gagal: {e}")
@@ -82,8 +79,6 @@ def generate_date_range(start_m, start_y, end_m, end_y):
         current = datetime.datetime(year, month, 1)
     return target_months
 
-# --- 4. LOGIKA VALIDASI (KHUSUS WEST: JALUR DARI MACHINE 1) ---
-
 def validate_row_and_get_data(row, df_master):
     sku = format_material(row['Material'])
     size_src = round(float(pd.to_numeric(row['Size'], errors='coerce') or 0), 0)
@@ -92,51 +87,43 @@ def validate_row_and_get_data(row, df_master):
     plant_src = str(row['Plant']).strip()
     region_src = REGION_MAP.get(plant_src, "Unknown").upper()
 
-    # Cari di DB untuk Speed, prioritaskan region yang sama
     matches = df_master[(df_master['sku_code'] == sku) & (df_master['size'] == size_src)]
     
     if len(matches) > 1:
         region_matches = matches[matches['region'] == region_src]
         if not region_matches.empty:
             matches = region_matches
-
-    # --- PENENTUAN LINE (Kunci Perbaikan) ---
     assigned_line = None
     
-    # Logic khusus West: Ambil Line dari Machine 1 Excel
     if region_src == "WEST":
-        # Jika tertulis SGZ, kita tetap sebut SGZ (nanti di grouping bisa ke tab SGZ/BiB)
         assigned_line = m1_excel
     else:
-        # Region East (Prambanan/Import/3rd Party) tetap mengikuti logika DB atau Manual
         if plant_src == "3rd Party":
             if sku in PRIORITY_LIST.get("East_3rd Party_RTD 1", []): assigned_line = "RTD 1"
             elif sku in PRIORITY_LIST.get("East_3rd Party_RTD 2", []): assigned_line = "RTD 2"
-        
         if not assigned_line:
             if not matches.empty:
                 allowed_lines = matches['line'].unique().tolist()
                 assigned_line = m1_excel if m1_excel in allowed_lines else allowed_lines[0]
             else:
                 assigned_line = m1_excel
+    if not assigned_line: return None, 0, 0
 
-    if not assigned_line: return None, 0
-
-    # Ambil Speed dari DB berdasarkan assigned_line yang sudah ditentukan
     speed = 0
+    kg_cb = 0
     if not matches.empty:
         line_match = matches[matches['line'] == assigned_line]
-        # Jika tidak ketemu speed untuk line spesifik itu, ambil speed rata-rata SKU tersebut di region tersebut
-        speed = line_match['speed'].iloc[0] if not line_match.empty else matches['speed'].iloc[0]
+        if not line_match.empty:
+            speed = line_match['speed'].iloc[0]
+            kg_cb = line_match['kg_cb'].iloc[0]
+        else:
+            speed = matches['speed'].iloc[0]
+            kg_cb = matches['kg_cb'].iloc[0]
     
-    return assigned_line, speed
-
-# --- 5. PROSES UTAMA ---
+    return assigned_line, speed, kg_cb
 
 def process_data(uploaded_file, sheet_target, target_range, df_master):
     df_raw = pd.read_excel(uploaded_file, sheet_name=sheet_target, header=None)
-    
-    # Batas TOTAL
     row_header_temp = df_raw.iloc[3]
     mat_col_idx = next((i for i, val in enumerate(row_header_temp) if str(val).strip() == "Material"), None)
     if mat_col_idx is not None:
@@ -159,10 +146,10 @@ def process_data(uploaded_file, sheet_target, target_range, df_master):
     df_data['Machine 1'] = df_data['Machine 1'].astype(str).str.strip().str.upper()
     
     results = df_data.apply(lambda r: validate_row_and_get_data(r, df_master), axis=1)
-    df_data['Line'], df_data['Speed'] = [r[0] for r in results], [r[1] for r in results]
+    df_data['Line'], df_data['Speed'], df_data['Kg_TU'] = [r[0] for r in results], [r[1] for r in results], [r[2] for r in results]
     df_data = df_data.dropna(subset=['Line'])
 
-    df_vertical = pd.melt(df_data, id_vars=INPUT_COLUMNS + ["Line", "Speed"], 
+    df_vertical = pd.melt(df_data, id_vars=INPUT_COLUMNS + ["Line", "Speed", "Kg_TU"], 
                          value_vars=prod_names, var_name='Month', value_name='Qty (Ctn)')
     df_vertical['Qty (Ctn)'] = pd.to_numeric(df_vertical['Qty (Ctn)'], errors='coerce').fillna(0).round(0).astype(int)
     df_vertical = df_vertical[df_vertical['Qty (Ctn)'] > 0]
@@ -172,14 +159,10 @@ def process_data(uploaded_file, sheet_target, target_range, df_master):
     for _, row in df_vertical.iterrows():
         plant, sku, line_val = str(row['Plant']).strip(), str(row['Material']), str(row['Line']).strip()
         region = REGION_MAP.get(plant, "Unknown")
-        
-        # Penentuan Nama Sheet: West_Plant_Line
         key = f"{region}_{plant}_{line_val}"
-        
-        # Pengecekan tab BiB (Sesuai list SKU)
+            
         if sku in PRIORITY_LIST.get("West_Sentul_SGZ", []) and line_val == "SGZ":
             key = f"{region}_{plant}_BiB"
-            
         if key == "East_3rd Party_A": continue
         if key not in sheet_groups: sheet_groups[key] = []
         sheet_groups[key].append(row)
@@ -214,7 +197,7 @@ def process_data(uploaded_file, sheet_target, target_range, df_master):
             df_f['prod hour'] = (df_f['Qty (Ctn)'] / df_f['Speed'].replace(0, np.nan)).fillna(0).round(2)
             df_f['Days'] = (df_f['prod hour'] / 24).round(2)
             
-            t_starts, t_finishes, forced, over, missing = [], [], [], [], []
+            t_start_dt, t_finish_dt, forced, over, missing = [], [], [], [], []
             current_time, last_month_str = None, None
             
             for _, row in df_f.iterrows():
@@ -231,13 +214,26 @@ def process_data(uploaded_file, sheet_target, target_range, df_master):
                 start_t = current_time
                 finish_t = start_t + datetime.timedelta(hours=float(row['prod hour']))
                 
-                t_starts.append(start_t.strftime('%d-%m-%Y %H:%M:%S'))
-                t_finishes.append(finish_t.strftime('%d-%m-%Y %H:%M:%S'))
+                t_start_dt.append(start_t)
+                t_finish_dt.append(finish_t)
                 forced.append(is_forced); over.append(finish_t.month != month_dt.month or finish_t.year != month_dt.year)
                 missing.append(row['Speed'] == 0)
                 current_time, last_month_str = finish_t, row['Month']
-            
-            df_f['Time Start'], df_f['Time Finish'], df_f['_forced'], df_f['_over'], df_f['_missing'] = t_starts, t_finishes, forced, over, missing
+
+            def compute_release(dt_val):
+                release_dt = dt_val + datetime.timedelta(days=5)
+                while release_dt.weekday() >= 5:
+                    release_dt += datetime.timedelta(days=1)
+                return release_dt
+
+            release_dt_list = [compute_release(dt_val) for dt_val in t_finish_dt]
+            df_f['Time Start'] = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in t_start_dt]
+            df_f['Time Finish'] = [dt.strftime('%Y-%m-%d %H:%M:%S') for dt in t_finish_dt]
+            df_f['Release Time'] = [dt.strftime('%Y-%m-%d') for dt in release_dt_list]
+            df_f['Qty Bulk (kg)'] = (df_f['Kg_TU'].fillna(0) * df_f['Qty (Ctn)']).round(0)
+            df_f['BIN'] = (df_f['Qty Bulk (kg)'].fillna(0) / 750).round(2)
+            df_f['_forced'], df_f['_over'], df_f['_missing'] = forced, over, missing
+            export_df = df_f.rename(columns={"Month": "Date", "Material": "SAP Article", "Material Description": "Description", "Size": "Pack Size"})
             
             def row_styler(row):
                 if row['_missing']: return ['background-color: #00FF00'] * len(row)
@@ -245,19 +241,17 @@ def process_data(uploaded_file, sheet_target, target_range, df_master):
                 if row['_over']: return ['background-color: #FFC000'] * len(row)
                 return [''] * len(row)
 
-            cols = ['Line', 'Month', 'Material', 'Material Description', 'Size', 'Pcs/cb', 'Speed', 'prod hour', 'Days', 'Time Start', 'Time Finish', 'Qty (Ctn)']
-            styled_df = df_f.style.apply(row_styler, axis=1)
+            cols = ['Line', 'Date', 'SAP Article', 'Description', 'Pack Size', 'Kg_TU', 'Qty (Ctn)', 'Qty Bulk (kg)', 'BIN', 'Time Start', 'Time Finish', 'Release Time']
+            styled_df = export_df.style.apply(row_styler, axis=1)
             styled_df.to_excel(writer, sheet_name=clean_sheet_name(key), index=False, columns=cols)
             
     return output.getvalue()
 
-# --- UI ---
 st.set_page_config(page_title="MPS to DPS Pro", layout="wide")
 st.title("📊 MPS to DPS Converter")
 
 df_master = get_db_master_full()
 file_upload = st.file_uploader("Upload File MPS Cycle", type="xlsx")
-
 if file_upload:
     xl = pd.ExcelFile(file_upload)
     with st.sidebar:
