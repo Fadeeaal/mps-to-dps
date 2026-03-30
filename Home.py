@@ -1,9 +1,9 @@
 import streamlit as st
 
 def main():
-    st.set_page_config(page_title="Supply Chain Hub", layout="wide")
+    st.set_page_config(page_title="MPS - DPS Converter & Merger", layout="wide")
 
-    st.title("🏭 Supply Chain Planning System")
+    st.title("🏭 MPS - DPS Converter & Merger")
     st.markdown("---")
 
     # Use columns for feature layout
@@ -38,7 +38,7 @@ def main():
             st.switch_page("pages/2_MPS_DPS_Merger.py")
 
     st.markdown("---")
-    st.caption("© 2026 Supply Chain Digitalization Team")
+    st.caption("© 2026 Rakha Fadil - SC Planning Intern @ Danone")
 
 if __name__ == "__main__":
     main()
