@@ -64,7 +64,7 @@ def get_db_master_full():
 
         return df_db
     except Exception as e:
-        st.error(f"Koneksi DB Gagal: {e}")
+        st.error(f"Database connection failed: {e}")
         return pd.DataFrame()
 
 def generate_date_range(start_m, start_y, end_m, end_y):
@@ -169,6 +169,19 @@ def process_data(uploaded_file, sheet_target, target_range, df_master):
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        east_region_frames, west_region_frames = [], []
+
+        cols = ['Line', 'Date', 'SAP Article', 'Description', 'Pack Size', 'Kg_TU', 'Qty (Ctn)', 'Qty Bulk (kg)', 'BIN', 'Time Start', 'Time Finish', 'Release Time']
+
+        def row_styler(row):
+            if row['_missing']:
+                return ['background-color: #00FF00'] * len(row)
+            if row['_forced']:
+                return ['background-color: #FF0000; color: white'] * len(row)
+            if row['_over']:
+                return ['background-color: #FFC000'] * len(row)
+            return [''] * len(row)
+
         for key in sorted(sheet_groups.keys()):
             df_group = pd.DataFrame(sheet_groups[key])
             priority_order = PRIORITY_LIST.get(key, [])
@@ -234,40 +247,57 @@ def process_data(uploaded_file, sheet_target, target_range, df_master):
             df_f['BIN'] = (df_f['Qty Bulk (kg)'].fillna(0) / 750).round(2)
             df_f['_forced'], df_f['_over'], df_f['_missing'] = forced, over, missing
             export_df = df_f.rename(columns={"Month": "Date", "Material": "SAP Article", "Material Description": "Description", "Size": "Pack Size"})
-            
-            def row_styler(row):
-                if row['_missing']: return ['background-color: #00FF00'] * len(row)
-                if row['_forced']: return ['background-color: #FF0000; color: white'] * len(row)
-                if row['_over']: return ['background-color: #FFC000'] * len(row)
-                return [''] * len(row)
 
-            cols = ['Line', 'Date', 'SAP Article', 'Description', 'Pack Size', 'Kg_TU', 'Qty (Ctn)', 'Qty Bulk (kg)', 'BIN', 'Time Start', 'Time Finish', 'Release Time']
+            if key.startswith("East_"):
+                east_region_frames.append(export_df.copy())
+            elif key.startswith("West_"):
+                west_region_frames.append(export_df.copy())
+
             styled_df = export_df.style.apply(row_styler, axis=1)
             styled_df.to_excel(writer, sheet_name=clean_sheet_name(key), index=False, columns=cols)
+
+        def write_region_sheet(sheet_name, frames):
+            if not frames:
+                return
+
+            df_region = pd.concat(frames, ignore_index=True)
+            df_region['_line_sort'] = df_region['Line'].astype(str).str.strip().str.upper()
+            df_region['_date_sort'] = pd.to_datetime(df_region['Date'], format='%b-%y', errors='coerce')
+            df_region = df_region.sort_values(
+                by=['_line_sort', '_date_sort', 'Time Start', 'SAP Article'],
+                kind='stable'
+            )
+            df_region = df_region.drop(columns=['_line_sort', '_date_sort'])
+
+            styled_region = df_region.style.apply(row_styler, axis=1)
+            styled_region.to_excel(writer, sheet_name=clean_sheet_name(sheet_name), index=False, columns=cols)
+
+        write_region_sheet('All_East', east_region_frames)
+        write_region_sheet('All_West', west_region_frames)
             
     return output.getvalue()
 
 st.set_page_config(page_title="MPS to DPS Pro", layout="wide")
-st.title("📊 MPS to DPS Converter")
+st.title("MPS to DPS Converter")
 
 df_master = get_db_master_full()
 file_upload = st.file_uploader("Upload File MPS Cycle", type="xlsx")
 if file_upload:
     xl = pd.ExcelFile(file_upload)
     with st.sidebar:
-        st.header("⚙️ Konfigurasi")
-        sheet_target = st.selectbox("Sheet Sumber", xl.sheet_names, index=0)
-        sm = st.selectbox("Mulai", MONTHS_LIST, index=0)
-        sy = st.number_input("Tahun Mulai", value=2026, key='sy_mulai') 
-        em = st.selectbox("Sampai", MONTHS_LIST, index=11)
-        ey = st.number_input("Tahun Selesai", value=2026, key='ey_selesai') 
+        st.header("Configuration")
+        sheet_target = st.selectbox("Source Sheet", xl.sheet_names, index=0)
+        sm = st.selectbox("Start Month", MONTHS_LIST, index=0)
+        sy = st.number_input("Start Year", value=2026, key='sy_mulai') 
+        em = st.selectbox("End Month", MONTHS_LIST, index=11)
+        ey = st.number_input("End Year", value=2026, key='ey_selesai') 
 
     if st.button("Start Process", use_container_width=True):
         try:
             trange = generate_date_range(sm, sy, em, ey)
             res = process_data(file_upload, sheet_target, trange, df_master)
             if res:
-                st.success("Berhasil! Data telah Dikonversi.")
-                st.download_button("📥 Unduh Hasil Data", res, f"MPS_Final_{datetime.date.today()}.xlsx")
+                st.success("Success! Data has been converted.")
+                st.download_button("Download Output File", res, f"MPS_Final_{datetime.date.today()}.xlsx")
         except Exception as e:
             st.error(f"Error: {e}")
