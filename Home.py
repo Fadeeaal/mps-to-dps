@@ -31,7 +31,7 @@ def main():
         **Key Features:**
         - Dynamic sheet selection from both files.
         - Separate navigation for East and West regions.
-        - Automatic column cleanup (only 12 main columns).
+        - Automatic column cleanup.
         - Sorting by month and production line.
         """)
         if st.button("Open Merger"):
